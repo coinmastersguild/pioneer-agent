@@ -77,6 +77,9 @@ RUN npm install -g pnpm@9.15.4 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
+# Install proxy server dependencies
+RUN npm install -g express http-proxy-middleware
+
 # Set the working directory
 WORKDIR /app
 
@@ -93,18 +96,15 @@ COPY --from=builder /app/packages ./packages
 COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/characters ./characters
 
-# Add the proxy server file
-COPY proxy.js ./
-
-# Install express and proxy middleware
-RUN npm install express http-proxy-middleware
+# Add the proxy server
+COPY server-proxy.js ./
 
 # Add a healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-  CMD curl -f http://localhost:8080/api/health || exit 1
+  CMD curl -f http://localhost:3000/api/health || exit 1
 
 # Expose necessary ports
 EXPOSE 3000 5173 8080
 
-# Command to start the application with proxy
-CMD ["sh", "-c", "pnpm start & pnpm start:client & node proxy.js"]
+# Command to start the application
+CMD ["sh", "-c", "pnpm start & pnpm --dir client dev --host & node server-proxy.js"]
