@@ -101,7 +101,7 @@ RUN npm install express http-proxy-middleware
 
 # Add a healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-  CMD curl -f http://localhost:3000/api/health || exit 1
+  CMD curl -f http://localhost:8080/api/health || exit 1
 
 # Expose necessary ports
 EXPOSE 3000 5173 8080
