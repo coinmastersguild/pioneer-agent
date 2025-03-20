@@ -1,0 +1,361 @@
+version: 2.1
+
+orbs:
+  docker: circleci/docker@2.2.0
+  kubernetes: circleci/kubernetes@1.3
+
+jobs:
+  build-and-push:
+    machine:
+      image: ubuntu-2004:current
+      docker_layer_caching: true
+    resource_class: large
+    steps:
+      - checkout
+      
+      # Restore Docker cache
+      - restore_cache:
+          keys:
+            - docker-cache-{{ .Branch }}-{{ .Revision }}
+            - docker-cache-{{ .Branch }}-
+            - docker-cache-
+      
+      - run:
+          name: Enable Docker experimental features
+          command: |
+            # Create Docker config with experimental features enabled (using string "true" instead of boolean)
+            mkdir -p ~/.docker
+            echo '{"experimental": "true"}' | tee ~/.docker/config.json
+      
+      - run:
+          name: Set up Docker buildx
+          command: |
+            # Make sure we have the latest Docker version
+            docker version
+            
+            # Install latest buildx from GitHub releases
+            BUILDX_VERSION=v0.12.1
+            mkdir -p ~/.docker/cli-plugins
+            curl -sSL "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-amd64" -o ~/.docker/cli-plugins/docker-buildx
+            chmod +x ~/.docker/cli-plugins/docker-buildx
+            
+            # Verify installation
+            docker buildx version
+            
+            # Remove any existing builder with the same name
+            docker buildx rm mybuilder || true
+            
+            # Create and use a new builder with docker-container driver
+            docker buildx create --use --name mybuilder --driver docker-container
+            docker buildx inspect --bootstrap mybuilder
+      
+      - run:
+          name: Login to DigitalOcean Container Registry
+          command: |
+            echo $DIGITALOCEAN_ACCESS_TOKEN | docker login registry.digitalocean.com -u $DIGITALOCEAN_ACCESS_TOKEN --password-stdin
+      
+      - run:
+          name: Build and push amd64 image (Bun-powered build)
+          command: |
+            # First try with buildx (for multi-platform support)
+            echo "Attempting to build with buildx..."
+            if docker buildx build \
+              --platform linux/amd64 \
+              -t registry.digitalocean.com/pioneer/degen-server:${CIRCLE_SHA1} \
+              -t registry.digitalocean.com/pioneer/degen-server:latest \
+              -f ./apps/game-client/Dockerfile \
+              --cache-from=registry.digitalocean.com/pioneer/degen-server:latest \
+              --build-arg BUILDKIT_INLINE_CACHE=1 \
+              --build-arg DISABLE_ESLINT_PLUGIN=true \
+              --push \
+              .; then
+              echo "Buildx build successful!"
+            else
+              echo "Buildx build failed, falling back to standard Docker build..."
+              # Fallback to standard Docker build
+              docker build \
+                -t registry.digitalocean.com/pioneer/degen-server:${CIRCLE_SHA1} \
+                -t registry.digitalocean.com/pioneer/degen-server:latest \
+                -f ./apps/game-client/Dockerfile \
+                --build-arg DISABLE_ESLINT_PLUGIN=true \
+                .
+              
+              # Push the images
+              docker push registry.digitalocean.com/pioneer/degen-server:${CIRCLE_SHA1}
+              docker push registry.digitalocean.com/pioneer/degen-server:latest
+            fi
+      
+      # Save Docker cache
+      - save_cache:
+          key: docker-cache-{{ .Branch }}-{{ .Revision }}
+          paths:
+            - /home/circleci/.docker/buildx
+
+  build-and-push-eliza:
+    machine:
+      image: ubuntu-2004:current
+      docker_layer_caching: true
+    resource_class: large
+    steps:
+      - checkout
+      
+      # Restore Docker cache
+      - restore_cache:
+          keys:
+            - eliza-docker-cache-{{ .Branch }}-{{ .Revision }}
+            - eliza-docker-cache-{{ .Branch }}-
+            - eliza-docker-cache-
+      
+      - run:
+          name: Enable Docker experimental features
+          command: |
+            # Create Docker config with experimental features enabled (using string "true" instead of boolean)
+            mkdir -p ~/.docker
+            echo '{"experimental": "true"}' | tee ~/.docker/config.json
+      
+      - run:
+          name: Set up Docker buildx
+          command: |
+            # Make sure we have the latest Docker version
+            docker version
+            
+            # Install latest buildx from GitHub releases
+            BUILDX_VERSION=v0.12.1
+            mkdir -p ~/.docker/cli-plugins
+            curl -sSL "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-amd64" -o ~/.docker/cli-plugins/docker-buildx
+            chmod +x ~/.docker/cli-plugins/docker-buildx
+            
+            # Verify installation
+            docker buildx version
+            
+            # Remove any existing builder with the same name
+            docker buildx rm mybuilder || true
+            
+            # Create and use a new builder with docker-container driver
+            docker buildx create --use --name mybuilder --driver docker-container
+            docker buildx inspect --bootstrap mybuilder
+      
+      - run:
+          name: Login to DigitalOcean Container Registry
+          command: |
+            echo $DIGITALOCEAN_ACCESS_TOKEN | docker login registry.digitalocean.com -u $DIGITALOCEAN_ACCESS_TOKEN --password-stdin
+      
+      - run:
+          name: Build and push Eliza multi-agent image
+          command: |
+            cd eliza-multi-agent
+            
+            # First try with buildx (for multi-platform support)
+            echo "Attempting to build Eliza with buildx..."
+            if docker buildx build \
+              --platform linux/amd64 \
+              -t registry.digitalocean.com/pioneer/pioneer-agent:${CIRCLE_SHA1} \
+              -t registry.digitalocean.com/pioneer/pioneer-agent:latest \
+              -f ./Dockerfile \
+              --cache-from=registry.digitalocean.com/pioneer/pioneer-agent:latest \
+              --build-arg BUILDKIT_INLINE_CACHE=1 \
+              --push \
+              .; then
+              echo "Buildx build successful!"
+            else
+              echo "Buildx build failed, falling back to standard Docker build..."
+              # Fallback to standard Docker build
+              docker build \
+                -t registry.digitalocean.com/pioneer/pioneer-agent:${CIRCLE_SHA1} \
+                -t registry.digitalocean.com/pioneer/pioneer-agent:latest \
+                -f ./Dockerfile \
+                .
+              
+              # Push the images
+              docker push registry.digitalocean.com/pioneer/pioneer-agent:${CIRCLE_SHA1}
+              docker push registry.digitalocean.com/pioneer/pioneer-agent:latest
+            fi
+      
+      # Save Docker cache
+      - save_cache:
+          key: eliza-docker-cache-{{ .Branch }}-{{ .Revision }}
+          paths:
+            - /home/circleci/.docker/buildx
+
+  restart-deployment:
+    docker:
+      - image: cimg/base:2024.01
+    resource_class: small
+    steps:
+      - checkout
+      
+      # Use a cached installation of kubectl if possible
+      - restore_cache:
+          keys:
+            - v1-kubectl-{{ .Branch }}
+            - v1-kubectl-
+      
+      - kubernetes/install-kubectl
+      
+      - save_cache:
+          key: v1-kubectl-{{ .Branch }}
+          paths:
+            - /home/circleci/bin/kubectl
+      
+      # Use a cached installation of doctl if possible
+      - restore_cache:
+          keys:
+            - v1-doctl-{{ .Branch }}
+            - v1-doctl-
+            
+      - run:
+          name: Install doctl
+          command: |
+            if [ ! -f /usr/local/bin/doctl ]; then
+              cd /tmp
+              curl -sL https://github.com/digitalocean/doctl/releases/download/v1.101.0/doctl-1.101.0-linux-amd64.tar.gz | tar -xzv
+              sudo mv doctl /usr/local/bin
+            else
+              echo "Using cached doctl installation"
+            fi
+      
+      - save_cache:
+          key: v1-doctl-{{ .Branch }}
+          paths:
+            - /usr/local/bin/doctl
+            
+      - run:
+          name: Save DigitalOcean kubeconfig
+          command: |
+            doctl auth init -t $DIGITALOCEAN_ACCESS_TOKEN
+            doctl kubernetes cluster kubeconfig save do-cluster-2b9226d
+      - run:
+          name: Handle PVC (check first, create only if missing)
+          command: |
+            if kubectl get pvc degen-server-db-pvc &> /dev/null; then
+              echo "PVC degen-server-db-pvc already exists, skipping creation"
+            else
+              echo "Creating new PVC degen-server-db-pvc"
+              kubectl apply -f k8s/db-pvc.yaml
+            fi
+      - run:
+          name: Update storageClassName only if it's missing
+          command: |
+            # Check if storageClassName is set in the PVC
+            SC=$(kubectl get pvc degen-server-db-pvc -o jsonpath='{.spec.storageClassName}')
+            if [ -z "$SC" ]; then
+              echo "Setting storageClassName to do-block-storage"
+              kubectl patch pvc degen-server-db-pvc -p '{"spec":{"storageClassName":"do-block-storage"}}'
+            else
+              echo "storageClassName is already set to: $SC"
+            fi
+      - run:
+          name: Restart deployment
+          command: |
+            # Only restart deployments that include 'degen-server' in the name
+            deploy=$(kubectl get deploy -o name | grep degen-server)
+            if [ -n "$deploy" ]; then
+              kubectl rollout restart $deploy
+              echo "Restarted deployment: $deploy"
+            else
+              echo "No degen-server deployment found"
+              exit 1
+            fi
+
+  deploy-eliza:
+    docker:
+      - image: cimg/base:2024.01
+    resource_class: small
+    steps:
+      - checkout
+      
+      # Use a cached installation of kubectl if possible
+      - restore_cache:
+          keys:
+            - v1-kubectl-{{ .Branch }}
+            - v1-kubectl-
+      
+      - kubernetes/install-kubectl
+      
+      - save_cache:
+          key: v1-kubectl-{{ .Branch }}
+          paths:
+            - /home/circleci/bin/kubectl
+      
+      # Use a cached installation of doctl if possible
+      - restore_cache:
+          keys:
+            - v1-doctl-{{ .Branch }}
+            - v1-doctl-
+            
+      - run:
+          name: Install doctl
+          command: |
+            if [ ! -f /usr/local/bin/doctl ]; then
+              cd /tmp
+              curl -sL https://github.com/digitalocean/doctl/releases/download/v1.101.0/doctl-1.101.0-linux-amd64.tar.gz | tar -xzv
+              sudo mv doctl /usr/local/bin
+            else
+              echo "Using cached doctl installation"
+            fi
+      
+      - save_cache:
+          key: v1-doctl-{{ .Branch }}
+          paths:
+            - /usr/local/bin/doctl
+            
+      - run:
+          name: Save DigitalOcean kubeconfig
+          command: |
+            doctl auth init -t $DIGITALOCEAN_ACCESS_TOKEN
+            doctl kubernetes cluster kubeconfig save do-cluster-2b9226d
+      
+      - run:
+          name: Create/update Kubernetes resources
+          command: |
+            # Apply Kubernetes manifests for Eliza
+            kubectl apply -f k8s/eliza-deployment.yaml
+            kubectl apply -f k8s/eliza-service.yaml
+            
+            # Restart the deployment to pull the latest image
+            kubectl rollout restart deployment/pioneer-agent
+            
+            # Wait for rollout to complete
+            kubectl rollout status deployment/pioneer-agent
+            
+workflows:
+  version: 2
+  build-deploy:
+    jobs:
+      - build-and-push:
+          filters:
+            branches:
+              only: 
+                - master
+                - feature/bun-migration
+                - local-works
+                - begin-pull-master
+                - fix-server-crash
+      - restart-deployment:
+          requires:
+            - build-and-push
+          filters:
+            branches:
+              only: 
+                - master
+                - feature/bun-migration
+                - local-works
+                - begin-pull-master
+                - fix-server-crash
+  
+  sprint-1-eliza-deploy:
+    jobs:
+      - build-and-push-eliza:
+          filters:
+            branches:
+              only:
+                - sprint-1
+                - main
+      - deploy-eliza:
+          requires:
+            - build-and-push-eliza
+          filters:
+            branches:
+              only:
+                - sprint-1
+                - main 

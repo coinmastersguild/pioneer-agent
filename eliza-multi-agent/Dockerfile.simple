@@ -1,0 +1,30 @@
+# Use Node 23 on Alpine for a smaller image
+FROM node:23-alpine
+
+# Install required system dependencies
+RUN apk add --no-cache python3 git ffmpeg curl bash
+
+# Set working directory
+WORKDIR /app
+
+# Copy package files first to leverage Docker cache
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
+COPY agent/package.json agent/
+COPY client/package.json client/
+COPY packages/core/package.json packages/core/
+COPY packages/client-direct/package.json packages/client-direct/
+
+# Install pnpm
+RUN npm install -g pnpm@9.15.4
+
+# Install dependencies without optional packages (no need for native modules)
+RUN pnpm install --no-optional
+
+# Copy the rest of the application
+COPY . .
+
+# Expose the necessary ports
+EXPOSE 3000 5173 
+
+# Command to start the application
+CMD ["sh", "-c", "pnpm start & pnpm start:client"] 

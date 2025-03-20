@@ -1,0 +1,30 @@
+# Simple image for demo purposes
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Install basic tools
+RUN apk add --no-cache curl
+
+# Create necessary directories
+RUN mkdir -p /app/client/dist
+
+# Add a static HTML file for testing
+RUN echo '<!DOCTYPE html><html><head><title>Eliza Multi-Agent</title></head><body><h1>Eliza Multi-Agent Demo</h1><p>This is a container deployment demo for Pioneer Agent.</p></body></html>' > /app/client/dist/index.html
+
+# Create a simple express server
+RUN npm init -y && \
+    npm install express
+
+# Copy the server.js file
+COPY server.js /app/server.js
+
+# Expose ports
+EXPOSE 3000
+
+# Add healthcheck
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD curl -s http://localhost:3000/api/health | grep -q "ok" || exit 1
+
+# Start server
+CMD ["node", "server.js"] 

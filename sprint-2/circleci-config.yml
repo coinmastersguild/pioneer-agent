@@ -1,0 +1,224 @@
+version: 2.1
+
+orbs:
+  docker: circleci/docker@2.2.0
+  kubernetes: circleci/kubernetes@1.3
+
+jobs:
+  build-verification:
+    machine:
+      image: ubuntu-2004:current
+      docker_layer_caching: true
+    resource_class: large
+    steps:
+      - checkout
+      
+      # Restore Docker cache
+      - restore_cache:
+          keys:
+            - eliza-docker-cache-verify-{{ .Branch }}-{{ .Revision }}
+            - eliza-docker-cache-verify-{{ .Branch }}-
+            - eliza-docker-cache-verify-
+      
+      # Install additional tools
+      - run:
+          name: Install additional tools
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y jq
+      
+      # Enable Docker experimental features
+      - run:
+          name: Enable Docker experimental features
+          command: |
+            mkdir -p ~/.docker
+            echo '{"experimental": "true"}' | tee ~/.docker/config.json
+      
+      # Set up Docker buildx
+      - run:
+          name: Set up Docker buildx
+          command: |
+            docker version
+            
+            BUILDX_VERSION=v0.12.1
+            mkdir -p ~/.docker/cli-plugins
+            curl -sSL "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-amd64" -o ~/.docker/cli-plugins/docker-buildx
+            chmod +x ~/.docker/cli-plugins/docker-buildx
+            
+            docker buildx version
+            docker buildx rm mybuilder || true
+            docker buildx create --use --name mybuilder --driver docker-container
+            docker buildx inspect --bootstrap mybuilder
+      
+      # Output architecture information
+      - run:
+          name: Output architecture information
+          command: |
+            echo "Architecture: $(uname -m)"
+            echo "Node version: $(node -v)"
+            echo "npm version: $(npm -v)"
+      
+      # Verify Dockerfile syntax
+      - run:
+          name: Verify Dockerfile syntax
+          command: |
+            cd eliza-multi-agent
+            cp ../sprint-2/Dockerfile.improved ./Dockerfile.sprint2
+            docker run --rm -i hadolint/hadolint < Dockerfile.sprint2 || echo "Warnings found but continuing"
+      
+      # Test build with minimal scope
+      - run:
+          name: Test build with minimal scope (no push)
+          command: |
+            cd eliza-multi-agent
+            echo "Building verification image..."
+            docker buildx build \
+              --platform linux/amd64 \
+              -t eliza-verify:${CIRCLE_SHA1} \
+              -f Dockerfile.sprint2 \
+              --build-arg BUILDKIT_INLINE_CACHE=1 \
+              --load \
+              .
+      
+      # Save Docker cache
+      - save_cache:
+          key: eliza-docker-cache-verify-{{ .Branch }}-{{ .Revision }}
+          paths:
+            - /home/circleci/.docker/buildx
+
+  build-and-push-eliza:
+    machine:
+      image: ubuntu-2004:current
+      docker_layer_caching: true
+    resource_class: large
+    steps:
+      - checkout
+      
+      # Restore Docker cache
+      - restore_cache:
+          keys:
+            - eliza-docker-cache-build-{{ .Branch }}-{{ .Revision }}
+            - eliza-docker-cache-build-{{ .Branch }}-
+            - eliza-docker-cache-build-
+      
+      # Enable Docker experimental features
+      - run:
+          name: Enable Docker experimental features
+          command: |
+            mkdir -p ~/.docker
+            echo '{"experimental": "true"}' | tee ~/.docker/config.json
+      
+      # Set up Docker buildx
+      - run:
+          name: Set up Docker buildx
+          command: |
+            docker version
+            
+            BUILDX_VERSION=v0.12.1
+            mkdir -p ~/.docker/cli-plugins
+            curl -sSL "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-amd64" -o ~/.docker/cli-plugins/docker-buildx
+            chmod +x ~/.docker/cli-plugins/docker-buildx
+            
+            docker buildx version
+            docker buildx rm mybuilder || true
+            docker buildx create --use --name mybuilder --driver docker-container
+            docker buildx inspect --bootstrap mybuilder
+      
+      # Login to DigitalOcean Registry
+      - run:
+          name: Login to DigitalOcean Container Registry
+          command: |
+            echo $DIGITALOCEAN_ACCESS_TOKEN | docker login registry.digitalocean.com -u $DIGITALOCEAN_ACCESS_TOKEN --password-stdin
+      
+      # Prepare Dockerfile
+      - run:
+          name: Prepare Dockerfile
+          command: |
+            cd eliza-multi-agent
+            cp ../sprint-2/Dockerfile.improved ./Dockerfile.sprint2
+      
+      # Build and push Eliza image
+      - run:
+          name: Build and push Eliza multi-agent image
+          command: |
+            cd eliza-multi-agent
+            
+            # Build with better error handling
+            echo "Building with buildx for amd64..."
+            
+            set +e
+            docker buildx build \
+              --platform linux/amd64 \
+              -t registry.digitalocean.com/pioneer/pioneer-agent:${CIRCLE_SHA1} \
+              -t registry.digitalocean.com/pioneer/pioneer-agent:latest \
+              -f Dockerfile.sprint2 \
+              --cache-from=registry.digitalocean.com/pioneer/pioneer-agent:latest \
+              --build-arg BUILDKIT_INLINE_CACHE=1 \
+              --push \
+              .
+            
+            BUILD_RESULT=$?
+            if [ $BUILD_RESULT -ne 0 ]; then
+              echo "Buildx build failed with exit code $BUILD_RESULT. See logs for details."
+              exit $BUILD_RESULT
+            fi
+            
+            echo "Build and push completed successfully!"
+      
+      # Save Docker cache
+      - save_cache:
+          key: eliza-docker-cache-build-{{ .Branch }}-{{ .Revision }}
+          paths:
+            - /home/circleci/.docker/buildx
+
+  deploy-eliza-pulumi:
+    docker:
+      - image: pulumi/pulumi:latest
+    steps:
+      - checkout
+      - run:
+          name: Install doctl
+          command: |
+            apt-get update && apt-get install -y curl
+            cd /tmp
+            curl -sL https://github.com/digitalocean/doctl/releases/download/v1.101.0/doctl-1.101.0-linux-amd64.tar.gz | tar -xzv
+            mv doctl /usr/local/bin
+      - run:
+          name: Setup Kubernetes Config
+          command: |
+            doctl auth init -t $DIGITALOCEAN_ACCESS_TOKEN
+            doctl kubernetes cluster kubeconfig save do-cluster-2b9226d
+      - run:
+          name: Deploy with Pulumi
+          command: |
+            cd /Users/highlander/WebstormProjects/pioneer-deployment/deploy
+            pulumi login --local
+            pulumi stack select dev
+            REGISTRY_IMAGE_TAG=${CIRCLE_SHA1} pulumi up --yes
+
+workflows:
+  version: 2
+  sprint-2-eliza-deploy:
+    jobs:
+      - build-verification:
+          filters:
+            branches:
+              only:
+                - sprint-2
+                - main
+      - build-and-push-eliza:
+          requires:
+            - build-verification
+          filters:
+            branches:
+              only:
+                - sprint-2
+                - main
+      - deploy-eliza-pulumi:
+          requires:
+            - build-and-push-eliza
+          filters:
+            branches:
+              only:
+                - sprint-2
+                - main 

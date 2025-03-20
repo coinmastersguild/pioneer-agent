@@ -1,0 +1,63 @@
+# CircleCI-like environment for local testing
+FROM ubuntu:20.04
+
+# Avoid prompts from apt
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install essential tools
+RUN apt-get update && apt-get install -y \
+    curl \
+    wget \
+    git \
+    build-essential \
+    python3 \
+    python3-pip \
+    ffmpeg \
+    node-gyp \
+    libtool-bin \
+    autoconf \
+    automake \
+    libopus-dev \
+    make \
+    g++ \
+    libcairo2-dev \
+    libjpeg-dev \
+    libpango1.0-dev \
+    libgif-dev \
+    openssl \
+    libssl-dev \
+    libsecret-1-dev \
+    ca-certificates \
+    gnupg \
+    lsb-release
+
+# Install Docker CLI for interacting with the host Docker
+RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list && \
+    apt-get update && \
+    apt-get install -y docker-ce-cli
+
+# Install Node.js 18.x (more stable than 23.x for native modules)
+RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+    apt-get install -y nodejs
+
+# Install pnpm
+RUN npm install -g pnpm@9.15.7
+
+# Install Docker Buildx
+RUN mkdir -p ~/.docker/cli-plugins && \
+    curl -L "https://github.com/docker/buildx/releases/download/v0.12.1/buildx-v0.12.1.linux-amd64" -o ~/.docker/cli-plugins/docker-buildx && \
+    chmod +x ~/.docker/cli-plugins/docker-buildx
+
+# Create a working directory
+WORKDIR /workspace
+
+# Helper script to set up Docker-in-Docker access
+RUN echo '#!/bin/bash\n\
+echo "Setting up Docker access..."\n\
+export DOCKER_HOST=unix:///var/run/docker.sock\n\
+exec "$@"' > /entrypoint.sh && \
+    chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["/bin/bash"] 
