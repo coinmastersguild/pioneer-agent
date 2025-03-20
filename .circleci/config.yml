@@ -151,7 +151,7 @@ jobs:
               --platform linux/amd64 \
               -t registry.digitalocean.com/pioneer/pioneer-agent:${CIRCLE_SHA1} \
               -t registry.digitalocean.com/pioneer/pioneer-agent:latest \
-              -f ./Dockerfile \
+              -f ./Dockerfile.api-only \
               --cache-from=registry.digitalocean.com/pioneer/pioneer-agent:latest \
               --build-arg BUILDKIT_INLINE_CACHE=1 \
               --push \
@@ -163,7 +163,7 @@ jobs:
               docker build \
                 -t registry.digitalocean.com/pioneer/pioneer-agent:${CIRCLE_SHA1} \
                 -t registry.digitalocean.com/pioneer/pioneer-agent:latest \
-                -f ./Dockerfile \
+                -f ./Dockerfile.api-only \
                 .
               
               # Push the images
@@ -309,8 +309,7 @@ jobs:
           name: Create/update Kubernetes resources
           command: |
             # Apply Kubernetes manifests for Eliza
-            kubectl apply -f k8s/eliza-deployment.yaml
-            kubectl apply -f k8s/eliza-service.yaml
+            kubectl apply -f k8s/pioneer-agent-api.yaml
             
             # Restart the deployment to pull the latest image
             kubectl rollout restart deployment/pioneer-agent

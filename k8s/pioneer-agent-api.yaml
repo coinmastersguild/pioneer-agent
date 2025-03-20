@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pioneer-agent
+  labels:
+    app: pioneer-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pioneer-agent
+  template:
+    metadata:
+      labels:
+        app: pioneer-agent
+    spec:
+      containers:
+      - name: pioneer-agent
+        image: registry.digitalocean.com/pioneer/pioneer-agent:latest
+        ports:
+        - containerPort: 3000
+          name: api
+        - containerPort: 8080
+          name: proxy
+        resources:
+          requests:
+            cpu: "1"
+            memory: "2Gi"
+          limits:
+            cpu: "2"
+            memory: "4Gi"
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: proxy
+          initialDelaySeconds: 60
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: proxy
+          initialDelaySeconds: 30
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pioneer-agent
+spec:
+  selector:
+    app: pioneer-agent
+  ports:
+  - port: 80
+    targetPort: 8080
+    name: http
+  type: LoadBalancer 
