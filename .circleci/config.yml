@@ -343,13 +343,13 @@ workflows:
                 - begin-pull-master
                 - fix-server-crash
   
-  sprint-1-eliza-deploy:
+  sprint-2-eliza-deploy:
     jobs:
       - build-and-push-eliza:
           filters:
             branches:
               only:
-                - sprint-1
+                - sprint-2
                 - main
       - deploy-eliza:
           requires:
@@ -357,5 +357,5 @@ workflows:
           filters:
             branches:
               only:
-                - sprint-1
+                - sprint-2
                 - main 

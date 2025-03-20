@@ -146,7 +146,7 @@ jobs:
           path: reports/dependency-audit.md
           destination: dependency-audit.md
 
-  build-and-push:
+  build-and-push-eliza:
     executor: docker-builder
     steps:
       - checkout
@@ -171,7 +171,7 @@ jobs:
       - run:
           name: Prepare Dockerfile
           command: |
-            cp sprint-2/Dockerfile.improved ./Dockerfile.sprint2
+            cp sprint-2/Dockerfile.improved ./Dockerfile
       
       # Build and push Eliza image
       - run:
@@ -186,7 +186,7 @@ jobs:
               -t registry.digitalocean.com/pioneer/pioneer-agent:${CIRCLE_SHA1} \
               -t registry.digitalocean.com/pioneer/pioneer-agent:latest \
               -t registry.digitalocean.com/pioneer/pioneer-agent:sprint-2 \
-              -f Dockerfile.sprint2 \
+              -f Dockerfile \
               --cache-from=registry.digitalocean.com/pioneer/pioneer-agent:latest \
               --build-arg BUILDKIT_INLINE_CACHE=1 \
               --push \
@@ -273,7 +273,7 @@ workflows:
                 - sprint-2
                 - main
       
-      - build-and-push:
+      - build-and-push-eliza:
           requires:
             - verify-dockerfile
             - dependency-audit
@@ -285,7 +285,7 @@ workflows:
       
       - deploy-to-kubernetes:
           requires:
-            - build-and-push
+            - build-and-push-eliza
           filters:
             branches:
               only:
