@@ -15,7 +15,7 @@ fi
 ORG_SLUG="gh/coinmastersguild"  # Updated to use the correct org slug
 API_TOKEN=$CIRCLE_CI_TOKEN
 PROJECT_NAME="pioneer-agent"
-BRANCH="sprint-2"
+BRANCH=${1:-main}  # Use first argument if provided, otherwise default to main
 API_URL="https://circleci.com/api/v2"
 
 echo "Fetching pipelines for project: $PROJECT_NAME, branch: $BRANCH"

@@ -1,0 +1,9 @@
+{
+  "name": "pioneer-agent-api",
+  "version": "1.0.0",
+  "description": "Pioneer Agent API",
+  "main": "simple-api-server.js",
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+} 
