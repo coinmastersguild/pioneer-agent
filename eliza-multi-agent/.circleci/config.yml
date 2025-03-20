@@ -4,12 +4,46 @@ orbs:
   docker: circleci/docker@2.2.0
   kubernetes: circleci/kubernetes@1.3
 
-jobs:
-  build-verification:
+executors:
+  docker-builder:
     machine:
       image: ubuntu-2004:current
       docker_layer_caching: true
     resource_class: large
+  
+  pulumi-deployer:
+    docker:
+      - image: pulumi/pulumi:latest
+    resource_class: medium
+
+commands:
+  setup_buildx:
+    description: "Set up Docker buildx for multi-platform builds"
+    steps:
+      - run:
+          name: Enable Docker experimental features
+          command: |
+            mkdir -p ~/.docker
+            echo '{"experimental": "true"}' | tee ~/.docker/config.json
+      
+      - run:
+          name: Set up Docker buildx
+          command: |
+            docker version
+            
+            BUILDX_VERSION=v0.12.1
+            mkdir -p ~/.docker/cli-plugins
+            curl -sSL "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-amd64" -o ~/.docker/cli-plugins/docker-buildx
+            chmod +x ~/.docker/cli-plugins/docker-buildx
+            
+            docker buildx version
+            docker buildx rm mybuilder || true
+            docker buildx create --use --name mybuilder --driver docker-container
+            docker buildx inspect --bootstrap mybuilder
+
+jobs:
+  verify-dockerfile:
+    executor: docker-builder
     steps:
       - checkout
       
@@ -25,30 +59,19 @@ jobs:
           name: Install additional tools
           command: |
             sudo apt-get update
-            sudo apt-get install -y jq hadolint
+            sudo apt-get install -y jq
       
-      # Enable Docker experimental features
+      # Install Hadolint
       - run:
-          name: Enable Docker experimental features
+          name: Install Hadolint
           command: |
-            mkdir -p ~/.docker
-            echo '{"experimental": "true"}' | tee ~/.docker/config.json
+            HADOLINT_VERSION=v2.12.0
+            sudo curl -sSL "https://github.com/hadolint/hadolint/releases/download/${HADOLINT_VERSION}/hadolint-Linux-x86_64" -o /usr/local/bin/hadolint
+            sudo chmod +x /usr/local/bin/hadolint
+            hadolint --version
       
       # Set up Docker buildx
-      - run:
-          name: Set up Docker buildx
-          command: |
-            docker version
-            
-            BUILDX_VERSION=v0.12.1
-            mkdir -p ~/.docker/cli-plugins
-            curl -sSL "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-amd64" -o ~/.docker/cli-plugins/docker-buildx
-            chmod +x ~/.docker/cli-plugins/docker-buildx
-            
-            docker buildx version
-            docker buildx rm mybuilder || true
-            docker buildx create --use --name mybuilder --driver docker-container
-            docker buildx inspect --bootstrap mybuilder
+      - setup_buildx
       
       # Output architecture information
       - run:
@@ -63,7 +86,7 @@ jobs:
           name: Verify Dockerfile syntax
           command: |
             cp sprint-2/Dockerfile.improved ./Dockerfile.sprint2
-            docker run --rm -i hadolint/hadolint < Dockerfile.sprint2 || echo "Warnings found but continuing"
+            hadolint Dockerfile.sprint2 || echo "Linting issues found, but continuing..."
       
       # Test build with minimal scope
       - run:
@@ -84,11 +107,47 @@ jobs:
           paths:
             - /home/circleci/.docker/buildx
 
-  build-and-push-eliza:
-    machine:
-      image: ubuntu-2004:current
-      docker_layer_caching: true
-    resource_class: large
+  dependency-audit:
+    docker:
+      - image: cimg/node:18.18
+    steps:
+      - checkout
+      
+      - run:
+          name: Install pnpm
+          command: |
+            npm install -g pnpm@9.15.7
+      
+      - restore_cache:
+          keys:
+            - eliza-dependencies-{{ checksum "pnpm-lock.yaml" }}
+            - eliza-dependencies-
+      
+      - run:
+          name: Install dependencies
+          command: |
+            pnpm install
+      
+      - save_cache:
+          key: eliza-dependencies-{{ checksum "pnpm-lock.yaml" }}
+          paths:
+            - node_modules
+            - packages/*/node_modules
+      
+      - run:
+          name: Run dependency audit
+          command: |
+            mkdir -p reports
+            chmod +x sprint-2/dependency-audit.sh
+            ./sprint-2/dependency-audit.sh > reports/dependency-audit.md
+            echo "Audit results saved to reports/dependency-audit.md"
+      
+      - store_artifacts:
+          path: reports/dependency-audit.md
+          destination: dependency-audit.md
+
+  build-and-push:
+    executor: docker-builder
     steps:
       - checkout
       
@@ -99,28 +158,8 @@ jobs:
             - eliza-docker-cache-build-{{ .Branch }}-
             - eliza-docker-cache-build-
       
-      # Enable Docker experimental features
-      - run:
-          name: Enable Docker experimental features
-          command: |
-            mkdir -p ~/.docker
-            echo '{"experimental": "true"}' | tee ~/.docker/config.json
-      
       # Set up Docker buildx
-      - run:
-          name: Set up Docker buildx
-          command: |
-            docker version
-            
-            BUILDX_VERSION=v0.12.1
-            mkdir -p ~/.docker/cli-plugins
-            curl -sSL "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-amd64" -o ~/.docker/cli-plugins/docker-buildx
-            chmod +x ~/.docker/cli-plugins/docker-buildx
-            
-            docker buildx version
-            docker buildx rm mybuilder || true
-            docker buildx create --use --name mybuilder --driver docker-container
-            docker buildx inspect --bootstrap mybuilder
+      - setup_buildx
       
       # Login to DigitalOcean Registry
       - run:
@@ -146,6 +185,7 @@ jobs:
               --platform linux/amd64 \
               -t registry.digitalocean.com/pioneer/pioneer-agent:${CIRCLE_SHA1} \
               -t registry.digitalocean.com/pioneer/pioneer-agent:latest \
+              -t registry.digitalocean.com/pioneer/pioneer-agent:sprint-2 \
               -f Dockerfile.sprint2 \
               --cache-from=registry.digitalocean.com/pioneer/pioneer-agent:latest \
               --build-arg BUILDKIT_INLINE_CACHE=1 \
@@ -165,53 +205,87 @@ jobs:
           key: eliza-docker-cache-build-{{ .Branch }}-{{ .Revision }}
           paths:
             - /home/circleci/.docker/buildx
+      
+      # Record deployment metadata
+      - run:
+          name: Record Deployment Metadata
+          command: |
+            mkdir -p /tmp/deployment
+            echo "{\"image\":\"registry.digitalocean.com/pioneer/pioneer-agent:${CIRCLE_SHA1}\", \"commit\":\"${CIRCLE_SHA1}\", \"branch\":\"${CIRCLE_BRANCH}\", \"build_url\":\"${CIRCLE_BUILD_URL}\"}" > /tmp/deployment/metadata.json
+            cat /tmp/deployment/metadata.json
+      
+      - persist_to_workspace:
+          root: /tmp
+          paths:
+            - deployment
 
-  deploy-eliza-pulumi:
-    docker:
-      - image: pulumi/pulumi:latest
+  deploy-to-kubernetes:
+    executor: pulumi-deployer
     steps:
       - checkout
+      - attach_workspace:
+          at: /tmp
+      
       - run:
           name: Install doctl
           command: |
-            apt-get update && apt-get install -y curl
+            apt-get update && apt-get install -y curl jq
             cd /tmp
             curl -sL https://github.com/digitalocean/doctl/releases/download/v1.101.0/doctl-1.101.0-linux-amd64.tar.gz | tar -xzv
             mv doctl /usr/local/bin
+      
       - run:
           name: Setup Kubernetes Config
           command: |
             doctl auth init -t $DIGITALOCEAN_ACCESS_TOKEN
             doctl kubernetes cluster kubeconfig save do-cluster-2b9226d
+      
+      - run:
+          name: Read deployment metadata
+          command: |
+            IMAGE_TAG=$(cat /tmp/deployment/metadata.json | jq -r '.image')
+            echo "Image tag for deployment: $IMAGE_TAG"
+            echo "export DEPLOY_IMAGE=$IMAGE_TAG" >> $BASH_ENV
+      
       - run:
           name: Deploy with Pulumi
           command: |
-            cd /Users/highlander/WebstormProjects/pioneer-deployment/deploy
-            pulumi login --local
-            pulumi stack select dev
-            REGISTRY_IMAGE_TAG=${CIRCLE_SHA1} pulumi up --yes
+            cd ./infrastructure/pulumi
+            PULUMI_CONFIG_PASSPHRASE=$PULUMI_PASSPHRASE pulumi login
+            PULUMI_CONFIG_PASSPHRASE=$PULUMI_PASSPHRASE pulumi stack select dev
+            PULUMI_CONFIG_PASSPHRASE=$PULUMI_PASSPHRASE REGISTRY_IMAGE_TAG=$DEPLOY_IMAGE pulumi up --yes
 
 workflows:
   version: 2
   sprint-2-eliza-deploy:
     jobs:
-      - build-verification:
+      - verify-dockerfile:
           filters:
             branches:
               only:
                 - sprint-2
                 - main
-      - build-and-push-eliza:
-          requires:
-            - build-verification
+      
+      - dependency-audit:
           filters:
             branches:
               only:
                 - sprint-2
                 - main
-      - deploy-eliza-pulumi:
+      
+      - build-and-push:
           requires:
-            - build-and-push-eliza
+            - verify-dockerfile
+            - dependency-audit
+          filters:
+            branches:
+              only:
+                - sprint-2
+                - main
+      
+      - deploy-to-kubernetes:
+          requires:
+            - build-and-push
           filters:
             branches:
               only:
