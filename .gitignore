@@ -5,3 +5,7 @@
 .env.development
 .env.test
 .env.production
+
+# CircleCI logs and config
+eliza-multi-agent/scripts/circleci/logs/
+eliza-multi-agent/scripts/circleci/config.json
