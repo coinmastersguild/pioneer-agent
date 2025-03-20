@@ -14,7 +14,7 @@ if [ -z "$CIRCLE_ORG" ] || [ -z "$CIRCLE_CI_TOKEN" ]; then
 fi
 
 # Variables
-ORG_ID=$CIRCLE_ORG
+ORG_SLUG="gh/coinmastersguild"  # Updated to use the correct org slug
 API_TOKEN=$CIRCLE_CI_TOKEN
 PROJECT_NAME="pioneer-agent"
 API_URL="https://circleci.com/api/v2"
@@ -22,25 +22,26 @@ API_URL="https://circleci.com/api/v2"
 echo "======================================================"
 echo "           CIRCLECI PROJECT SETTINGS CHECK           "
 echo "======================================================"
-echo "Organization ID: $ORG_ID"
+echo "Organization Slug: $ORG_SLUG"
 echo "Project Name: $PROJECT_NAME"
 echo "------------------------------------------------------"
+
+# Get the project by slug
+PROJECT_SLUG="${ORG_SLUG}/${PROJECT_NAME}"
+echo "Using project slug: $PROJECT_SLUG"
 
 # Get project information
 echo "Fetching project information..."
 PROJECT_RESPONSE=$(curl -s -H "Circle-Token: $API_TOKEN" \
-  "$API_URL/project/gh/$ORG_ID/$PROJECT_NAME")
+  "$API_URL/project/$PROJECT_SLUG")
 
 if echo "$PROJECT_RESPONSE" | jq -e '.message' >/dev/null 2>&1; then
   echo "Error: $(echo $PROJECT_RESPONSE | jq -r '.message')"
   exit 1
 fi
 
-# Extract project slug
-PROJECT_SLUG=$(echo $PROJECT_RESPONSE | jq -r '.slug')
 PROJECT_ID=$(echo $PROJECT_RESPONSE | jq -r '.id')
 
-echo "Project Slug: $PROJECT_SLUG"
 echo "Project ID: $PROJECT_ID"
 echo "------------------------------------------------------"
 

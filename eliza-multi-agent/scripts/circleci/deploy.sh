@@ -3,6 +3,9 @@
 # This script orchestrates the entire CircleCI workflow
 # It triggers a new pipeline, monitors it, and provides real-time feedback
 
+# Get the script directory
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
 # Load environment variables from .env
 set -a
 source /Users/highlander/WebstormProjects/pioneer-agent/.env
@@ -29,7 +32,7 @@ echo "------------------------------------------------------"
 
 # 1. Trigger a new pipeline
 echo "Step 1: Triggering new CircleCI pipeline"
-TRIGGER_OUTPUT=$(./trigger_pipeline.sh $BRANCH)
+TRIGGER_OUTPUT=$("$SCRIPT_DIR/trigger_pipeline.sh" $BRANCH)
 
 # Extract pipeline ID
 PIPELINE_ID=$(echo "$TRIGGER_OUTPUT" | grep "Pipeline ID:" | awk '{print $3}')
@@ -64,11 +67,11 @@ echo "------------------------------------------------------"
 
 # 3. Monitor the workflow
 echo "Step 3: Monitoring workflow progress"
-./monitor_workflow.sh $WORKFLOW_ID 15
+"$SCRIPT_DIR/monitor_workflow.sh" $WORKFLOW_ID 15
 
 # 4. Show final job details
 echo "Step 4: Retrieving final job details"
-./get_workflow_jobs.sh $WORKFLOW_ID
+"$SCRIPT_DIR/get_workflow_jobs.sh" $WORKFLOW_ID
 
 echo "======================================================"
 echo "           DEPLOYMENT PROCESS COMPLETE               "

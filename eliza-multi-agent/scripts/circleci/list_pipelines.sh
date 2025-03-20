@@ -12,7 +12,7 @@ if [ -z "$CIRCLE_ORG" ] || [ -z "$CIRCLE_CI_TOKEN" ]; then
 fi
 
 # Variables
-ORG_ID=$CIRCLE_ORG
+ORG_SLUG="gh/coinmastersguild"  # Updated to use the correct org slug
 API_TOKEN=$CIRCLE_CI_TOKEN
 PROJECT_NAME="pioneer-agent"
 BRANCH="sprint-2"
@@ -20,18 +20,9 @@ API_URL="https://circleci.com/api/v2"
 
 echo "Fetching pipelines for project: $PROJECT_NAME, branch: $BRANCH"
 
-# Get project slug
-PROJECT_RESPONSE=$(curl -s -H "Circle-Token: $API_TOKEN" \
-  "$API_URL/project/gh/$ORG_ID/$PROJECT_NAME")
-
-PROJECT_SLUG=$(echo $PROJECT_RESPONSE | jq -r '.slug')
-
-if [ -z "$PROJECT_SLUG" ] || [ "$PROJECT_SLUG" == "null" ]; then
-  echo "Getting project list instead..."
-  curl -s -H "Circle-Token: $API_TOKEN" \
-    "$API_URL/project/gh/$ORG_ID" | jq '.'
-  exit 1
-fi
+# Get the project by slug
+PROJECT_SLUG="${ORG_SLUG}/${PROJECT_NAME}"
+echo "Using project slug: $PROJECT_SLUG"
 
 # Get pipelines for the project
 echo "Fetching pipelines for project: $PROJECT_SLUG"
