@@ -93,12 +93,18 @@ COPY --from=builder /app/packages ./packages
 COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/characters ./characters
 
+# Add the proxy server file
+COPY proxy.js ./
+
+# Install express and proxy middleware
+RUN npm install express http-proxy-middleware
+
 # Add a healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:3000/api/health || exit 1
 
 # Expose necessary ports
-EXPOSE 3000 5173
+EXPOSE 3000 5173 8080
 
-# Command to start the application
-CMD ["sh", "-c", "pnpm start & pnpm start:client"]
+# Command to start the application with proxy
+CMD ["sh", "-c", "pnpm start & pnpm start:client & node proxy.js"]

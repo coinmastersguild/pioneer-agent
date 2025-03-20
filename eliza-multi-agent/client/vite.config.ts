@@ -18,6 +18,7 @@ export default defineConfig(({ mode }) => {
         ],
         clearScreen: false,
         envDir,
+        base: "/client/",
         define: {
             "import.meta.env.VITE_SERVER_PORT": JSON.stringify(
                 env.SERVER_PORT || "3000"
