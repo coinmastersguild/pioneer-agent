@@ -308,8 +308,14 @@ jobs:
       - run:
           name: Create/update Kubernetes resources
           command: |
+            # Debug - List files to check paths
+            echo "Listing workspace root:"
+            ls -la /home/circleci/project/
+            echo "Listing k8s directory if it exists:"
+            ls -la /home/circleci/project/k8s/ || echo "k8s directory not found"
+            
             # Apply Kubernetes manifests for Eliza
-            kubectl apply -f k8s/pioneer-agent-api.yaml
+            kubectl apply -f /home/circleci/project/k8s/pioneer-agent-api.yaml
             
             # Restart the deployment to pull the latest image
             kubectl rollout restart deployment/pioneer-agent
